@@ -101,17 +101,17 @@ def extract_text_from_txt(file_path):
 
 def normalize_position(position):
     """标准化岗位名称"""
-    if not position:
-        return ""
+    if not position or position.strip() == "":
+        return "无"
     
     # 常见岗位名称映射
     position_mapping = {
         '前端': '前端开发', 'web前端': '前端开发', '前端工程师': '前端开发',
-        '后端': '后端开发','后端': '后端开发工程师', 'java': 'Java开发', 'python': 'Python开发',
+        '后端': '后端开发', '后端': '后端开发工程师', 'java': 'Java开发', 'python': 'Python开发',
         '测试': '软件测试', 'qa': '软件测试', '测试工程师': '软件测试',
         '产品': '产品经理', '产品设计': '产品经理', 'pm': '产品经理',
         '运营': '运营专员', '新媒体': '新媒体运营', '内容运营': '内容运营',
-        '销售': '销售代表',  '销售': '销售经理','业务员': '销售代表', 'bd': '商务拓展',
+        '销售': '销售代表', '销售': '销售经理', '业务员': '销售代表', 'bd': '商务拓展',
         '人事': '人力资源', 'hr': '人力资源', '招聘': '招聘专员',
         '财务': '财务会计', '会计': '财务会计', '出纳': '财务会计',
         '行政': '行政专员', '文员': '行政专员', '助理': '行政助理'
@@ -126,7 +126,7 @@ def normalize_position(position):
             return value
     
     # 如果没有匹配的映射，返回原始值
-    return position
+    return position.strip()
 
 def parse_document(text):
     """从求职者简历文本中提取结构化信息"""
@@ -134,12 +134,12 @@ def parse_document(text):
         '姓名': '',
         '年龄': '',
         '性别': '',
-        '学历': '',
-        '专业': '',
-        '工作经验': '',
-        '期望薪资': '',
-        '求职岗位': '',
-        '联系方式': ''
+        '学历': '无',
+        '专业': '无',
+        '工作经验': '无',
+        '期望薪资': '无',
+        '求职岗位': '无',
+        '联系方式': '无'
     }
     
     # 改进的姓名提取 - 匹配表格格式和无冒号格式
@@ -170,12 +170,12 @@ def parse_document(text):
     if education_match:
         info['学历'] = education_match.group(1)
     
-    # 改进的专业提取 - 匹配各种格式
+    # 改进的专业提取 - 避免匹配到"专业技能"
     major_match = re.search(r'(?:专业|所学专业|主修专业)[\s:：]*([\u4e00-\u9fa5A-Za-z]{2,10})', text)
-    if not major_match:
-        major_match = re.search(r'专业[\s]*([\u4e00-\u9fa5A-Za-z]{2,10})', text)
-    if major_match:
+    if major_match and "技能" not in major_match.group(0) and "能力" not in major_match.group(0):
         info['专业'] = major_match.group(1)
+    else:
+        info['专业'] = "无"
     
     # 改进的工作经验提取 - 匹配各种格式
     exp_match = re.search(r'(?:工作经验|工作年限|从业时间)[\s:：]*(\d+)', text)
@@ -184,14 +184,19 @@ def parse_document(text):
     if exp_match:
         info['工作经验'] = exp_match.group(1) + "年"
     
-    # 期望薪资提取 - 支持中文描述
-    salary_match = re.search(r'(?:期望薪资|薪资要求|期望月薪|期望年薪)[\s:：]*([\d\-~～kK万底薪提成薪金工资待遇薪\+＋加]+)', text)
+    # 期望薪资提取 - 支持中文描述和"面议"
+    salary_match = re.search(r'(?:期望薪资|薪资要求|期望月薪|期望年薪)[\s:：]*([\d\-~～kK万底薪提成薪金工资待遇薪\+＋加面议]+)', text)
     if not salary_match:
-        salary_match = re.search(r'期望薪资[\s]*([\d\-~～kK万底薪提成薪金工资待遇薪\+＋加]+)', text)
+        salary_match = re.search(r'期望薪资[\s:：]*([\d\-~～kK万底薪提成薪金工资待遇薪\+＋加面议]+)', text)
     if salary_match:
-        info['期望薪资'] = salary_match.group(1).strip()
+        salary_str = salary_match.group(1).strip()
+        # 检查是否是"面议"或类似表达
+        if any(word in salary_str for word in ["面议", "协商", "商议", "negotiable"]):
+            info['期望薪资'] = "面议"
+        else:
+            info['期望薪资'] = salary_str
     
-    # 求职岗位提取 - 增强版
+    # 求职岗位提取 - 修复空岗位问题
     position_patterns = [
         r'(?:求职意向|应聘职位|申请职位|期望职位|目标岗位|求职岗位)[\s:：]*([\u4e00-\u9fa5A-Za-z0-9（）()、/]+)',
         r'(?:期望工作|意向岗位|岗位意向)[\s:：]*([\u4e00-\u9fa5A-Za-z0-9（）()、/]+)',
@@ -204,10 +209,12 @@ def parse_document(text):
         match = re.search(pattern, text)
         if match:
             position = match.group(1).strip()
-            position = re.sub(r'^[：:\s]+', '', position)
-            info['求职岗位'] = position
-            position_found = True
-            break
+            # 检查是否是空值
+            if position and position != "" and "薪资" not in position:
+                position = re.sub(r'^[：:\s]+', '', position)
+                info['求职岗位'] = position
+                position_found = True
+                break
     
     # 如果未匹配到，尝试跨行匹配
     if not position_found:
@@ -218,24 +225,23 @@ def parse_document(text):
         )
         if match:
             position = match.group(1).strip()
-            position = re.split(r'[\n\r]+', position)[0]
-            info['求职岗位'] = position
+            if position and position != "" and "薪资" not in position:
+                position = re.split(r'[\n\r]+', position)[0]
+                info['求职岗位'] = position
+            else:
+                info['求职岗位'] = "无"
+        else:
+            info['求职岗位'] = "无"
     
     # 标准化岗位名称
     info['求职岗位'] = normalize_position(info['求职岗位'])
     
     # 联系方式提取 - 匹配各种格式
-    # contact_match = re.search(r'(?:电话|手机|联系方式|联系电话)[\s:：]*([\d\-\+\(\) ]{7,15})', text)
-    # if not contact_match:
-    #     email_match = re.search(r'(?:邮箱|电子邮箱|email)[\s:：]*([\w\.-]+@[\w\.-]+)', text)
-    #     if email_match:
-    #         info['联系方式'] = email_match.group(1)
-            
-    contact_match = re.search(r'(电话|手机|联系方式|联系电话)[：:]\s*([\d\-]+)', text)
+    contact_match = re.search(r'(?:电话|手机|联系方式|联系电话)[：:]\s*([\d\-]+)', text)
     if contact_match:
-        info['联系方式'] = contact_match.group(2)
+        info['联系方式'] = contact_match.group(1)
     else:
-        email_match = re.search(r'邮箱[：:]\s*([\w\.-]+@[\w\.-]+)', text)
+        email_match = re.search(r'(?:邮箱|电子邮箱|email)[：:]\s*([\w\.-]+@[\w\.-]+)', text)
         if email_match:
             info['联系方式'] = email_match.group(1)
     
@@ -243,7 +249,7 @@ def parse_document(text):
 
 def calculate_position_similarity(pos1, pos2):
     """计算两个岗位名称的相似度 (0-1)"""
-    if not pos1 or not pos2:
+    if not pos1 or not pos2 or pos1 == "无" or pos2 == "无":
         return 0.0
     
     # 完全匹配
@@ -321,23 +327,27 @@ def match_applicant_to_job(applicant_info, job_info):
         else:
             match_result['学历匹配'] = '符合' if applicant_level == job_level else '不符合'
     
-    # 薪资匹配
+    # 薪资匹配 - 处理"面议"情况
     applicant_salary = applicant_info.get('期望薪资', '')
     job_salary = job_info.get('薪资范围', '')
     
     if applicant_salary and job_salary:
-        app_min, app_max = extract_salary_range(applicant_salary)
-        job_min, job_max = extract_salary_range(job_salary)
-        
-        if app_min is not None and app_max is not None and job_min is not None and job_max is not None:
-            if app_min >= job_min and app_max <= job_max:
-                match_result['薪资匹配'] = '符合'
-            elif app_min <= job_max and app_max >= job_min:
-                match_result['薪资匹配'] = '部分符合'
-            else:
-                match_result['薪资匹配'] = '不符合'
+        # 如果求职者薪资是"面议"，则视为符合
+        if "面议" in applicant_salary:
+            match_result['薪资匹配'] = '符合'
         else:
-            match_result['薪资匹配'] = '无法评估'
+            app_min, app_max = extract_salary_range(applicant_salary)
+            job_min, job_max = extract_salary_range(job_salary)
+            
+            if app_min is not None and app_max is not None and job_min is not None and job_max is not None:
+                if app_min >= job_min and app_max <= job_max:
+                    match_result['薪资匹配'] = '符合'
+                elif app_min <= job_max and app_max >= job_min:
+                    match_result['薪资匹配'] = '部分符合'
+                else:
+                    match_result['薪资匹配'] = '不符合'
+            else:
+                match_result['薪资匹配'] = '无法评估'
     
     # 岗位匹配
     applicant_position = applicant_info.get('求职岗位', '')
@@ -347,7 +357,10 @@ def match_applicant_to_job(applicant_info, job_info):
     position_similarity = calculate_position_similarity(applicant_position, job_position)
     match_result['岗位相似度'] = f"{position_similarity * 100:.0f}%"
     
-    if applicant_position and job_position:
+    # 处理空岗位情况
+    if not applicant_position or applicant_position == "无":
+        match_result['岗位匹配'] = '不符合'
+    elif applicant_position and job_position:
         if position_similarity >= 0.85:
             match_result['岗位匹配'] = '高度符合'
         elif position_similarity >= 0.6:
@@ -377,7 +390,7 @@ def match_applicant_to_job(applicant_info, job_info):
             job_exp_years = int(re.search(r'\d+', job_exp).group())
             match_result['工作经验匹配'] = '符合' if app_exp_years >= job_exp_years else '不符合'
         except:
-            match_result['工作经验匹配'] = '无法评估'
+            match_result['工作经验匹配'] = '不符合'
     
     # 计算整体匹配度
     critical_fields = ['岗位匹配', '学历匹配']
@@ -427,7 +440,10 @@ def match_applicant_to_job(applicant_info, job_info):
     return match_result
 
 def extract_salary_range(salary_str):
-    """从薪资字符串中提取数字范围，支持中文描述"""
+    """从薪资字符串中提取数字范围，支持中文描述和"面议"处理"""
+    if "面议" in salary_str:
+        return 0, float('inf')  # 表示无限制
+    
     salary_str = salary_str.replace(',', '').replace('，', '')
     numbers = []
     
@@ -570,7 +586,7 @@ def main():
             st.warning("请先选择岗位和上传求职者简历")
     
     # 显示匹配结果
-    if st.session_state.match_result:
+    if hasattr(st.session_state, 'match_result') and st.session_state.match_result:
         st.subheader("匹配分析结果")
         
         # 创建结果数据框，排除岗位相似度（将在后面单独显示）
@@ -620,7 +636,7 @@ def main():
                     st.warning("⚠️ 低度匹配：存在明显不匹配项")
                 else:
                     st.error("❌ 不匹配：求职者与职位要求差距较大")
-                    
+                
                 # 关键指标不符合时的特殊提示
                 if critical_fail and match_percentage > 0:
                     st.error("⛔ 关键指标（岗位/学历）不符合，求职者不符合企业基本要求")
